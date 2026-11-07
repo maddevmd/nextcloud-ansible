@@ -1,0 +1,49 @@
+---
+- name: Обновить публичный адрес Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  vars:
+    public_url_settings:
+      - key: overwritehost
+        value: "{{ nextcloud_public_host }}"
+      - key: overwriteprotocol
+        value: "{{ nextcloud_public_protocol }}"
+      - key: overwrite.cli.url
+        value: "{{ nextcloud_public_protocol }}://{{ nextcloud_public_host }}"
+      - key: trusted_domains
+        index: '1'
+        value: "{{ nextcloud_public_host }}"
+
+  tasks:
+    - name: Прочитать текущие значения
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'compose', '-f', project_dir ~ '/compose.yml',
+             'exec', '-T', '--user', 'www-data', 'nextcloud',
+             'php', 'occ', 'config:system:get', item.key]
+            + ([item.index] if item.index is defined else [])
+            + ['--default-value=']
+          }}
+      loop: "{{ public_url_settings }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: public_url_current
+      changed_when: false
+
+    - name: Обновить отличающиеся значения
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'compose', '-f', project_dir ~ '/compose.yml',
+             'exec', '-T', '--user', 'www-data', 'nextcloud',
+             'php', 'occ', 'config:system:set', item.item.key]
+            + ([item.item.index] if item.item.index is defined else [])
+            + ['--value=' ~ item.item.value]
+          }}
+      loop: "{{ public_url_current.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
+      when: item.stdout | trim != item.item.value

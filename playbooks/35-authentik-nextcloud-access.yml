@@ -1,0 +1,72 @@
+---
+- name: Ограничить SSO-доступ к Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Привязать группу доступа к приложению
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - authentik-worker
+          - ak
+          - shell
+          - -c
+          - |
+            import sys
+
+            from django.db import transaction
+            from authentik.core.models import Application, Group
+            from authentik.policies.models import PolicyBinding
+
+            slug = sys.stdin.read().strip()
+
+            with transaction.atomic():
+                application = Application.objects.get(slug=slug)
+                group = Group.objects.get(name="nextcloud-users")
+                changed = False
+
+                if group.is_superuser:
+                    raise RuntimeError("Access group must not be administrative")
+
+                if application.policy_engine_mode != "all":
+                    application.policy_engine_mode = "all"
+                    application.save(update_fields=["policy_engine_mode"])
+                    changed = True
+
+                binding, created = PolicyBinding.objects.get_or_create(
+                    target=application,
+                    group=group,
+                    order=0,
+                    defaults={
+                        "enabled": True,
+                        "negate": False,
+                        "expiring": False,
+                    },
+                )
+                changed = created or changed
+
+                if binding.policy_id or binding.user_id:
+                    raise RuntimeError("Unexpected access binding")
+
+                if (
+                    not binding.enabled
+                    or binding.negate
+                    or binding.expiring
+                ):
+                    binding.enabled = True
+                    binding.negate = False
+                    binding.expiring = False
+                    binding.save()
+                    changed = True
+
+            print("ACCESS_CHANGED" if changed else "ACCESS_UNCHANGED")
+        stdin: "{{ nextcloud_oidc_slug }}"
+      register: nextcloud_access
+      changed_when: "'ACCESS_CHANGED' in nextcloud_access.stdout"

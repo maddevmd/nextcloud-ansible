@@ -1,0 +1,42 @@
+---
+- name: Подготовить файлы сборки и настройки S3
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать каталоги файлов сборки
+      ansible.builtin.file:
+        path: "{{ project_dir }}/build/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - minio
+        - s3-client
+
+    - name: Передать Dockerfile MinIO
+      ansible.builtin.copy:
+        src: ../files/minio/Dockerfile
+        dest: "{{ project_dir }}/build/minio/Dockerfile"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Передать файлы S3-клиента
+      ansible.builtin.copy:
+        src: "../files/s3-client/{{ item }}"
+        dest: "{{ project_dir }}/build/s3-client/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - Dockerfile
+        - create_bucket.py
+        - test_storage.py
+        - nextcloud-policy.json
+        - setup_nextcloud_user.sh
+        - test_nextcloud_access.py
+        - ensure_policy.py
+        - ensure_user.py

@@ -1,0 +1,44 @@
+---
+- name: Подготовить секреты Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Проверить наличие пароля администратора Nextcloud
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/secrets/nextcloud_admin_password"
+      register: nextcloud_admin_secret
+
+    - name: Создать отсутствующий пароль администратора
+      ansible.builtin.copy:
+        dest: "{{ project_dir }}/secrets/nextcloud_admin_password"
+        content: "{{ lookup('ansible.builtin.password', '/dev/null', length=64, chars=['ascii_letters', 'digits']) }}\n"
+        owner: root
+        group: root
+        mode: '0600'
+        force: false
+      when: not nextcloud_admin_secret.stat.exists
+      no_log: true
+      diff: false
+
+    - name: Проверить подготовленный файл пароля
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/secrets/nextcloud_admin_password"
+      register: nextcloud_admin_secret
+
+    - name: Убедиться, что пароль подготовлен
+      ansible.builtin.assert:
+        that:
+          - nextcloud_admin_secret.stat.exists
+          - nextcloud_admin_secret.stat.isreg | default(false)
+          - (nextcloud_admin_secret.stat.size | default(0)) > 0
+        success_msg: "Пароль администратора Nextcloud подготовлен"
+
+    - name: Разрешить приложению чтение его S3-секрета
+      ansible.builtin.file:
+        path: "{{ project_dir }}/secrets/nextcloud_s3_secret_key"
+        state: file
+        owner: root
+        group: '33'
+        mode: '0440'

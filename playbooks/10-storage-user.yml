@@ -1,0 +1,25 @@
+---
+- name: Настроить учётную запись Nextcloud в MinIO
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать пользователя и назначить policy при необходимости
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - nextcloud-lab_storage
+          - --mount
+          - "type=bind,src={{ project_dir }}/secrets,dst=/run/secrets,readonly"
+          - --mount
+          - "type=bind,src={{ project_dir }}/build/s3-client,dst=/work,readonly"
+          - nextcloud-lab/s3-client:2
+          - python
+          - /work/ensure_user.py
+      register: user_setup
+      changed_when: "'USER_CHANGED' in (user_setup.stdout | default(''))"
+      no_log: true

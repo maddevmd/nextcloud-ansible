@@ -1,0 +1,25 @@
+---
+- name: Проверить подключение к учебному серверу
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Проверить SSH и доступность Python
+      ansible.builtin.ping:
+
+    - name: Получить основные сведения о сервере
+      ansible.builtin.setup:
+        gather_subset:
+          - "!all"
+          - "!min"
+          - distribution
+          - architecture
+
+    - name: Показать ОС и архитектуру сервера
+      ansible.builtin.debug:
+        msg: >-
+          Подключение работает.
+          ОС: {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }}.
+          Архитектура: {{ ansible_facts['architecture'] }}.

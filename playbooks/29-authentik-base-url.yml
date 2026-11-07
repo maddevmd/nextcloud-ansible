@@ -1,0 +1,36 @@
+---
+- name: Настроить основной адрес authentik
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Установить основной адрес при необходимости
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - authentik-worker
+          - ak
+          - shell
+          - -c
+          - |
+            import sys
+            from authentik.tenants.models import Tenant
+            from authentik.tenants.utils import get_current_tenant, normalize_base_url
+
+            desired = normalize_base_url(sys.stdin.read())
+            tenant = get_current_tenant()
+
+            if tenant.base_url == desired:
+                print("BASE_URL_UNCHANGED")
+            else:
+                Tenant.objects.filter(pk=tenant.pk).update(base_url=desired)
+                print("BASE_URL_CHANGED")
+        stdin: "https://{{ authentik_domain }}"
+      register: authentik_base_url
+      changed_when: "'BASE_URL_CHANGED' in authentik_base_url.stdout"

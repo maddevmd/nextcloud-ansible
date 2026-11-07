@@ -1,0 +1,14 @@
+---
+- name: Подготовить каталог учебного проекта
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать каталог проекта
+      ansible.builtin.file:
+        path: /opt/nextcloud-lab
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'

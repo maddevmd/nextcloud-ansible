@@ -1,0 +1,47 @@
+---
+- name: Подготовить ONLYOFFICE
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать каталог стартового скрипта
+      ansible.builtin.file:
+        path: "{{ project_dir }}/onlyoffice"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Проверить наличие JWT-секрета
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/secrets/onlyoffice_jwt_secret"
+      register: onlyoffice_jwt
+
+    - name: Создать отсутствующий JWT-секрет
+      ansible.builtin.copy:
+        dest: "{{ project_dir }}/secrets/onlyoffice_jwt_secret"
+        content: "{{ lookup('ansible.builtin.password', '/dev/null', length=64, chars=['ascii_letters', 'digits']) }}\n"
+        owner: root
+        group: root
+        mode: '0600'
+        force: false
+      when: not onlyoffice_jwt.stat.exists
+      no_log: true
+      diff: false
+
+    - name: Передать стартовый скрипт
+      ansible.builtin.copy:
+        src: ../files/onlyoffice/start.sh
+        dest: "{{ project_dir }}/onlyoffice/start.sh"
+        owner: root
+        group: root
+        mode: '0755'
+        validate: '/bin/sh -n %s'
+
+    - name: Разрешить Nextcloud читать JWT-секрет
+      ansible.builtin.file:
+        path: "{{ project_dir }}/secrets/onlyoffice_jwt_secret"
+        owner: root
+        group: '33'
+        mode: '0440'

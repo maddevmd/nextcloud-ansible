@@ -1,0 +1,47 @@
+---
+- name: Подготовить секреты PostgreSQL
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Проверить наличие секретов PostgreSQL
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/secrets/{{ item }}"
+      loop:
+        - postgres_admin_password
+        - nextcloud_db_password
+      register: postgres_secrets
+
+    - name: Создать отсутствующие секреты PostgreSQL
+      ansible.builtin.copy:
+        dest: "{{ project_dir }}/secrets/{{ item.item }}"
+        content: "{{ lookup('ansible.builtin.password', '/dev/null', length=64, chars=['ascii_letters', 'digits']) }}\n"
+        owner: root
+        group: root
+        mode: '0600'
+        force: false
+      loop: "{{ postgres_secrets.results }}"
+      when: not item.stat.exists
+      no_log: true
+      diff: false
+
+    - name: Повторно проверить секреты PostgreSQL
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/secrets/{{ item }}"
+      loop:
+        - postgres_admin_password
+        - nextcloud_db_password
+      register: postgres_secrets
+
+    - name: Убедиться, что секреты существуют и не пустые
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg | default(false)
+          - (item.stat.size | default(0)) > 0
+        fail_msg: "Секрет {{ item.item }} отсутствует или некорректен"
+        success_msg: "Секрет {{ item.item }} подготовлен"
+      loop: "{{ postgres_secrets.results }}"
+      loop_control:
+        label: "{{ item.item }}"

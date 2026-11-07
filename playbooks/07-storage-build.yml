@@ -1,0 +1,24 @@
+---
+- name: Собрать образы S3-хранилища и клиента
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Собрать образ MinIO, если он отсутствует
+      community.docker.docker_image_build:
+        name: nextcloud-lab/minio
+        tag: "2025-10-15"
+        path: "{{ project_dir }}/build/minio"
+        rebuild: never
+        outputs:
+          - type: docker
+
+    - name: Собрать образ клиента, если он отсутствует
+      community.docker.docker_image_build:
+        name: nextcloud-lab/s3-client
+        tag: "2"
+        path: "{{ project_dir }}/build/s3-client"
+        rebuild: never
+        outputs:
+          - type: docker

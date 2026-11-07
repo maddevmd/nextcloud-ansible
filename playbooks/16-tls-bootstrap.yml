@@ -1,0 +1,52 @@
+
+---
+- name: Подготовить HTTP-проверку сертификата
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать каталоги
+      ansible.builtin.file:
+        path: "{{ project_dir }}/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - tls-bootstrap
+        - acme-webroot/.well-known/acme-challenge
+
+    - name: Передать конфигурацию nginx
+      ansible.builtin.copy:
+        src: ../files/nginx/tls-bootstrap.conf
+        dest: "{{ project_dir }}/tls-bootstrap/default.conf"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Передать Compose для проверки домена
+      ansible.builtin.template:
+        src: ../templates/tls-bootstrap.compose.yml.j2
+        dest: "{{ project_dir }}/tls-bootstrap.yml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Создать проверочный файл
+      ansible.builtin.copy:
+        content: "domain-check-ok\n"
+        dest: "{{ project_dir }}/acme-webroot/.well-known/acme-challenge/check"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Запустить временный nginx
+      community.docker.docker_compose_v2:
+        project_src: "{{ project_dir }}"
+        files:
+          - tls-bootstrap.yml
+        state: present
+        pull: policy
+        wait: true
+        wait_timeout: 120

@@ -1,0 +1,111 @@
+---
+- name: Отключить доступ пользователя
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  vars:
+    nextcloud_occ:
+      - docker
+      - compose
+      - -f
+      - "{{ project_dir }}/compose.yml"
+      - exec
+      - -T
+      - --user
+      - www-data
+      - nextcloud
+      - php
+      - occ
+
+  tasks:
+    - name: Проверить входные параметры
+      ansible.builtin.assert:
+        that:
+          - disabled_authentik_user is defined
+          - disabled_nextcloud_uid is defined
+          - disabled_expected_display_name is defined
+          - disabled_authentik_user | default('') | length > 0
+          - disabled_nextcloud_uid | default('') | length > 0
+          - disabled_authentik_user | default('') != 'akadmin'
+          - disabled_nextcloud_uid | default('') != 'ncadmin'
+        fail_msg: "Укажи пользователя authentik, UID Nextcloud и ожидаемое отображаемое имя"
+
+    - name: Получить сведения о пользователе Nextcloud
+      ansible.builtin.command:
+        argv: "{{ nextcloud_occ + ['user:info', disabled_nextcloud_uid, '--output=json'] }}"
+      register: disabled_nextcloud_info
+      changed_when: false
+
+    - name: Проверить выбранную учётную запись
+      ansible.builtin.assert:
+        that:
+          - (disabled_nextcloud_info.stdout | from_json).backend == 'user_oidc'
+          - (disabled_nextcloud_info.stdout | from_json).display_name == disabled_expected_display_name
+          - "'admin' not in (disabled_nextcloud_info.stdout | from_json).groups"
+        fail_msg: "Проверка учётной записи не прошла; изменения не выполнялись"
+
+    - name: Заблокировать пользователя в authentik
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - authentik-worker
+          - ak
+          - shell
+          - -c
+          - |
+            import sys
+
+            from django.db import transaction
+            from authentik.core.models import User
+
+            username = sys.stdin.read().strip()
+
+            with transaction.atomic():
+                user = User.objects.select_for_update().get(
+                    username=username
+                )
+
+                if user.is_superuser:
+                    raise RuntimeError("Refusing to disable an administrator")
+
+                if user.is_active:
+                    user.is_active = False
+                    user.save(update_fields=["is_active"])
+                    print("USER_DISABLED")
+                else:
+                    print("USER_ALREADY_DISABLED")
+        stdin: "{{ disabled_authentik_user }}"
+      register: disabled_authentik_result
+      changed_when: "'USER_DISABLED' in disabled_authentik_result.stdout"
+
+    - name: Получить токены пользователя Nextcloud
+      ansible.builtin.command:
+        argv: "{{ nextcloud_occ + ['user:auth-tokens:list', disabled_nextcloud_uid, '--output=json'] }}"
+      register: disabled_user_tokens
+      changed_when: false
+      no_log: true
+
+    - name: Отозвать существующие токены
+      ansible.builtin.command:
+        argv: "{{ nextcloud_occ + ['user:auth-tokens:delete', disabled_nextcloud_uid] }}"
+      when: disabled_user_tokens.stdout | from_json | length > 0
+
+    - name: Проверить отсутствие токенов
+      ansible.builtin.command:
+        argv: "{{ nextcloud_occ + ['user:auth-tokens:list', disabled_nextcloud_uid, '--output=json'] }}"
+      register: disabled_remaining_tokens
+      changed_when: false
+      failed_when: >-
+        disabled_remaining_tokens.rc != 0
+        or (disabled_remaining_tokens.stdout | from_json | length > 0)
+      no_log: true
+
+    - name: Сообщить результат
+      ansible.builtin.debug:
+        msg: "Пользователь отключён в authentik, токены Nextcloud отозваны"

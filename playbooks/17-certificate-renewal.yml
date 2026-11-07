@@ -1,0 +1,74 @@
+---
+- name: Подготовить продление сертификатов
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Проверить, что окружение использует HTTPS
+      ansible.builtin.assert:
+        that:
+          - nginx_tls | default(false) | bool
+        fail_msg: "Этот playbook предназначен для HTTPS-окружения"
+
+    - name: Создать каталог служебных скриптов
+      ansible.builtin.file:
+        path: "{{ project_dir }}/scripts"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Передать скрипт продления
+      ansible.builtin.template:
+        src: ../templates/renew-certificates.sh.j2
+        dest: "{{ project_dir }}/scripts/renew-certificates.sh"
+        owner: root
+        group: root
+        mode: '0700'
+        validate: "/bin/sh -n %s"
+    - name: Создать службу продления сертификатов
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/nextcloud-cert-renew.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Renew Nextcloud TLS certificates
+          Wants=network-online.target
+          After=network-online.target docker.service
+          Requires=docker.service
+
+          [Service]
+          Type=oneshot
+          User=root
+          UMask=0077
+          ExecStart={{ project_dir }}/scripts/renew-certificates.sh
+          TimeoutStartSec=20min
+
+    - name: Создать расписание продления
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/nextcloud-cert-renew.timer
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Check TLS certificate renewal twice daily
+
+          [Timer]
+          OnCalendar=*-*-* 00,12:00:00
+          RandomizedDelaySec=1h
+          Persistent=true
+          Unit=nextcloud-cert-renew.service
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Включить таймер продления
+      ansible.builtin.systemd_service:
+        name: nextcloud-cert-renew.timer
+        daemon_reload: true
+        enabled: true
+        state: started

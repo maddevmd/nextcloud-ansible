@@ -1,0 +1,33 @@
+---
+- name: Подготовить пользователя базы Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Настроить пользователя и проверить подключение
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - "0"
+          - postgres
+          - sh
+          - -s
+        stdin: "{{ lookup('ansible.builtin.file', '../files/postgres/setup_nextcloud_db.sh') }}"
+      register: database_setup
+      changed_when: >-
+        'CREATE ROLE' in (database_setup.stdout | default(''))
+        or 'ALTER DATABASE' in (database_setup.stdout | default(''))
+      no_log: true
+
+    - name: Подтвердить готовность доступа
+      ansible.builtin.assert:
+        that:
+          - "'DATABASE_ACCESS_OK' in (database_setup.stdout | default(''))"
+        success_msg: "Пользователь Nextcloud подключается к своей базе"

@@ -1,0 +1,75 @@
+---
+- name: Настроить коннектор ONLYOFFICE
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Прочитать существующий JWT-секрет
+      ansible.builtin.slurp:
+        src: "{{ project_dir }}/secrets/onlyoffice_jwt_secret"
+      register: office_jwt_file
+      no_log: true
+
+    - name: Подготовить требуемые настройки
+      ansible.builtin.set_fact:
+        office_settings:
+          DocumentServerUrl: "https://{{ onlyoffice_domain }}/"
+          jwt_header: AuthorizationJwt
+          jwt_secret: "{{ office_jwt_file.content | b64decode | trim }}"
+      no_log: true
+
+    - name: Проверить непустой JWT-секрет
+      ansible.builtin.assert:
+        that:
+          - office_settings.jwt_secret | length > 0
+      no_log: true
+
+    - name: Получить текущие настройки коннектора
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - config:list
+          - onlyoffice
+          - --private
+          - --output=json
+      register: office_current
+      changed_when: false
+      no_log: true
+
+    - name: Выделить текущие настройки приложения
+      ansible.builtin.set_fact:
+        office_existing: "{{ (office_current.stdout | from_json).apps.onlyoffice | default({}) }}"
+      no_log: true
+
+    - name: Применить изменившиеся настройки
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - config:import
+        stdin: "{{ {'apps': {'onlyoffice': office_settings}} | to_json }}"
+      when: >-
+        office_existing.get('DocumentServerUrl', '') != office_settings.DocumentServerUrl
+        or office_existing.get('jwt_header', '') != office_settings.jwt_header
+        or office_existing.get('jwt_secret', '') != office_settings.jwt_secret
+      no_log: true

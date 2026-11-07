@@ -1,0 +1,38 @@
+---
+- name: Подготовить группу доступа к Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать обычную группу при отсутствии
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - authentik-worker
+          - ak
+          - shell
+          - -c
+          - |
+            from django.db import transaction
+            from authentik.core.models import Group
+
+            with transaction.atomic():
+                group, created = Group.objects.get_or_create(
+                    name="nextcloud-users",
+                    defaults={"is_superuser": False},
+                )
+
+                if group.is_superuser:
+                    raise RuntimeError(
+                        "nextcloud-users must not grant authentik administrator rights"
+                    )
+
+            print("GROUP_CREATED" if created else "GROUP_UNCHANGED")
+      register: nextcloud_access_group
+      changed_when: "'GROUP_CREATED' in nextcloud_access_group.stdout"

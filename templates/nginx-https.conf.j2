@@ -1,0 +1,160 @@
+{% if onlyoffice_domain is defined %}
+map $http_upgrade $office_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+{% endif %}
+
+server {
+    listen 80;
+    server_name {{ nextcloud_public_host }};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location = /healthz {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 301 https://{{ nextcloud_public_host }}$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name {{ nextcloud_public_host }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ nextcloud_public_host }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ nextcloud_public_host }}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 512M;
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    location = /healthz {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        set $nextcloud_backend nextcloud:80;
+
+        proxy_pass http://$nextcloud_backend;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+
+{% if onlyoffice_domain is defined %}
+server {
+    listen 80;
+    server_name {{ onlyoffice_domain }};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://{{ onlyoffice_domain }}$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name {{ onlyoffice_domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ onlyoffice_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ onlyoffice_domain }}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 512M;
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    location / {
+        set $office_backend onlyoffice:80;
+
+        proxy_pass http://$office_backend;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $office_connection_upgrade;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+{% endif %}
+
+{% if authentik_domain is defined %}
+map $http_upgrade $authentik_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 80;
+    server_name {{ authentik_domain }};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://{{ authentik_domain }}$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name {{ authentik_domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ authentik_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ authentik_domain }}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 32M;
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    location / {
+        set $authentik_backend authentik-server:9000;
+
+        proxy_pass http://$authentik_backend;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $authentik_connection_upgrade;
+
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+{% endif %}

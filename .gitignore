@@ -1,0 +1,36 @@
+# Python / Ansible
+.venv/
+__pycache__/
+*.py[cod]
+*.retry
+.DS_Store
+
+# Personal environments: publish examples only
+inventory/*.yml
+!inventory/example.yml
+!inventory/server.example.yml
+/AGENTS.md
+/PLAN.md
+
+# Secrets and runtime data
+.env
+.env.*
+!.env.example
+secrets/
+.private/
+letsencrypt/
+certbot-work/
+certbot-logs/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.log
+*.tar
+*.tar.gz
+*.tgz
+*.age
+*.dump
+*.sql

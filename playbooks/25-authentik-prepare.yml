@@ -1,0 +1,55 @@
+---
+- name: Подготовить секреты authentik
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать каталог секретов
+      ansible.builtin.file:
+        path: "{{ project_dir }}/secrets"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Проверить наличие секретов authentik
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/secrets/{{ item }}"
+      loop:
+        - authentik_db_password
+        - authentik_secret_key
+        - authentik_admin_password
+      register: authentik_secrets
+
+    - name: Создать отсутствующие секреты
+      ansible.builtin.copy:
+        dest: "{{ project_dir }}/secrets/{{ item.item }}"
+        content: "{{ lookup('ansible.builtin.password', '/dev/null', length=64, chars=['ascii_letters', 'digits']) }}\n"
+        owner: root
+        group: root
+        mode: '0600'
+        force: false
+      loop: "{{ authentik_secrets.results }}"
+      when: not item.stat.exists
+      no_log: true
+      diff: false
+
+    - name: Разрешить группе authentik читать секреты
+      ansible.builtin.file:
+        path: "{{ project_dir }}/secrets/{{ item }}"
+        owner: root
+        group: '1000'
+        mode: '0440'
+      loop:
+        - authentik_db_password
+        - authentik_secret_key
+        - authentik_admin_password
+
+    - name: Создать каталог данных authentik
+      ansible.builtin.file:
+        path: "{{ project_dir }}/data/authentik"
+        state: directory
+        owner: '1000'
+        group: '1000'
+        mode: '0770'

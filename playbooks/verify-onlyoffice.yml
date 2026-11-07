@@ -1,0 +1,32 @@
+---
+- name: Проверить интеграцию ONLYOFFICE
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Проверить связь из Nextcloud
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - onlyoffice:documentserver
+          - --check
+      register: office_check
+      changed_when: false
+      failed_when: >-
+        office_check.rc != 0
+        or 'is successfully connected' not in office_check.stdout
+
+    - name: Подтвердить успешную проверку
+      ansible.builtin.debug:
+        msg: "Nextcloud успешно подключён к ONLYOFFICE"

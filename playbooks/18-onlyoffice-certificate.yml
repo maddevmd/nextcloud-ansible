@@ -1,0 +1,38 @@
+---
+- name: Получить сертификат ONLYOFFICE
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Проверить параметры окружения
+      ansible.builtin.assert:
+        that:
+          - nginx_tls | default(false) | bool
+          - onlyoffice_domain is defined
+
+    - name: Выпустить отсутствующий сертификат
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --mount
+          - "type=bind,src={{ project_dir }}/letsencrypt,dst=/etc/letsencrypt"
+          - --mount
+          - "type=bind,src={{ project_dir }}/certbot-work,dst=/var/lib/letsencrypt"
+          - --mount
+          - "type=bind,src={{ project_dir }}/certbot-logs,dst=/var/log/letsencrypt"
+          - --mount
+          - "type=bind,src={{ project_dir }}/acme-webroot,dst=/var/www/acme"
+          - certbot/certbot:v5.8.0
+          - certonly
+          - --webroot
+          - --webroot-path
+          - /var/www/acme
+          - --cert-name
+          - "{{ onlyoffice_domain }}"
+          - -d
+          - "{{ onlyoffice_domain }}"
+          - --non-interactive
+        creates: "{{ project_dir }}/letsencrypt/live/{{ onlyoffice_domain }}/fullchain.pem"

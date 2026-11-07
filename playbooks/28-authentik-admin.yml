@@ -1,0 +1,116 @@
+---
+- name: Подготовить администратора authentik
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Прочитать подготовленный пароль администратора
+      ansible.builtin.slurp:
+        src: "{{ project_dir }}/secrets/authentik_admin_password"
+      register: authentik_admin_secret
+      no_log: true
+
+    - name: Назначить пароль при отсутствии действующего пароля
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - authentik-worker
+          - ak
+          - shell
+          - -c
+          - |
+            import sys
+            from django.contrib.auth import get_user_model
+            from django.db import transaction
+
+            password = sys.stdin.read().strip()
+            if not password:
+                raise RuntimeError("Admin password is empty")
+
+            with transaction.atomic():
+                user = (
+                    get_user_model().objects
+                    .select_for_update()
+                    .get(username="akadmin")
+                )
+
+                if user.has_usable_password():
+                    print("ADMIN_PASSWORD_UNCHANGED")
+                else:
+                    user.set_password(password)
+                    user.save(update_fields=["password"])
+                    print("ADMIN_PASSWORD_CREATED")
+        stdin: "{{ authentik_admin_secret.content | b64decode | trim }}"
+      register: authentik_admin_setup
+      changed_when: "'ADMIN_PASSWORD_CREATED' in authentik_admin_setup.stdout"
+      no_log: true
+
+    - name: Подтвердить завершение подготовки
+      ansible.builtin.assert:
+        that:
+          - >-
+            'ADMIN_PASSWORD_CREATED' in authentik_admin_setup.stdout
+            or 'ADMIN_PASSWORD_UNCHANGED' in authentik_admin_setup.stdout
+        success_msg: "Пароль администратора authentik настроен или уже существовал"
+
+    - name: Завершить первоначальную настройку authentik
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - authentik-worker
+          - ak
+          - shell
+          - -c
+          - |
+            from django.contrib.auth import get_user_model
+            from django.db import transaction
+            from authentik.blueprints.models import BlueprintInstance
+            from authentik.core.apps import Setup
+            from authentik.flows.models import Flow, FlowAuthenticationRequirement
+
+            with transaction.atomic():
+                user = get_user_model().objects.get(username="akadmin")
+
+                if not (
+                    user.is_active
+                    and user.is_superuser
+                    and user.has_usable_password()
+                ):
+                    raise RuntimeError("Administrator is not ready")
+
+                if Setup.get():
+                    print("SETUP_UNCHANGED")
+                else:
+                    if not Flow.objects.filter(
+                        slug="default-authentication-flow"
+                    ).exists():
+                        raise RuntimeError("Default login flow is missing")
+
+                    BlueprintInstance.objects.filter(
+                        **{
+                            "metadata__labels__blueprints.goauthentik.io/system-oobe": "true"
+                        }
+                    ).update(enabled=False)
+
+                    Flow.objects.filter(
+                        slug="initial-setup"
+                    ).update(
+                        authentication=FlowAuthenticationRequirement.REQUIRE_SUPERUSER
+                    )
+
+                    Setup.set(True)
+                    print("SETUP_COMPLETED")
+      register: authentik_setup
+      changed_when: "'SETUP_COMPLETED' in authentik_setup.stdout"
+      no_log: true

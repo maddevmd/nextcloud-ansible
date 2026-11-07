@@ -1,0 +1,63 @@
+---
+- name: Подготовить коннектор ONLYOFFICE
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Получить список приложений Nextcloud
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - app:list
+          - --output=json
+      register: nextcloud_apps
+      changed_when: false
+
+    - name: Установить отсутствующий коннектор
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - app:install
+          - onlyoffice
+      when:
+        - "'onlyoffice' not in (nextcloud_apps.stdout | from_json).enabled"
+        - "'onlyoffice' not in (nextcloud_apps.stdout | from_json).disabled"
+
+    - name: Включить установленный отключённый коннектор
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - app:enable
+          - onlyoffice
+      when: "'onlyoffice' in (nextcloud_apps.stdout | from_json).disabled"

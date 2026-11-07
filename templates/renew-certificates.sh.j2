@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+exec 9>/run/lock/nextcloud-cert-renew.lock
+
+if ! flock -n 9; then
+    echo "Another renewal process is running"
+    exit 0
+fi
+
+renewal_status=0
+
+docker run --rm \
+    --mount type=bind,src={{ project_dir }}/letsencrypt,dst=/etc/letsencrypt \
+    --mount type=bind,src={{ project_dir }}/certbot-work,dst=/var/lib/letsencrypt \
+    --mount type=bind,src={{ project_dir }}/certbot-logs,dst=/var/log/letsencrypt \
+    --mount type=bind,src={{ project_dir }}/acme-webroot,dst=/var/www/acme \
+    certbot/certbot:v5.8.0 \
+    renew \
+    --non-interactive \
+    --deploy-hook 'touch /var/lib/letsencrypt/reload-nginx' \
+    "$@" || renewal_status=$?
+
+if [ -f "{{ project_dir }}/certbot-work/reload-nginx" ]; then
+    docker compose -f "{{ project_dir }}/compose.yml" \
+        exec -T nginx nginx -t
+
+    docker compose -f "{{ project_dir }}/compose.yml" \
+        exec -T nginx nginx -s reload
+
+    rm "{{ project_dir }}/certbot-work/reload-nginx"
+    echo "Nginx reloaded after certificate renewal"
+fi
+
+exit "$renewal_status"

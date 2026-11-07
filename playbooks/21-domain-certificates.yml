@@ -1,0 +1,43 @@
+---
+- name: Получить сертификаты текущего окружения
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Проверить доменные имена
+      ansible.builtin.assert:
+        that:
+          - nextcloud_public_host is defined
+          - onlyoffice_domain is defined
+          - nextcloud_public_host != onlyoffice_domain
+
+    - name: Выпустить отсутствующие сертификаты
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --mount
+          - "type=bind,src={{ project_dir }}/letsencrypt,dst=/etc/letsencrypt"
+          - --mount
+          - "type=bind,src={{ project_dir }}/certbot-work,dst=/var/lib/letsencrypt"
+          - --mount
+          - "type=bind,src={{ project_dir }}/certbot-logs,dst=/var/log/letsencrypt"
+          - --mount
+          - "type=bind,src={{ project_dir }}/acme-webroot,dst=/var/www/acme"
+          - certbot/certbot:v5.8.0
+          - certonly
+          - --webroot
+          - --webroot-path
+          - /var/www/acme
+          - --cert-name
+          - "{{ item }}"
+          - -d
+          - "{{ item }}"
+          - --non-interactive
+        creates: "{{ project_dir }}/letsencrypt/live/{{ item }}/fullchain.pem"
+      loop:
+        - "{{ nextcloud_public_host }}"
+        - "{{ onlyoffice_domain }}"
+        - "{{ authentik_domain }}"

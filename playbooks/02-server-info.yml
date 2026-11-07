@@ -1,0 +1,30 @@
+---
+- name: Проверить учебный сервер
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Проверить подключение
+      ansible.builtin.ping:
+
+    - name: Получить имя пользователя на сервере
+      ansible.builtin.command:
+        cmd: whoami
+      register: current_user
+      changed_when: false
+
+    - name: Показать результат
+      ansible.builtin.debug:
+        msg: "На сервере команда выполняется от пользователя {{ current_user.stdout }}"
+
+    - name: Получить имя пользователя с административными правами
+      become: true
+      ansible.builtin.command:
+        cmd: whoami
+      register: privileged_user
+      changed_when: false
+
+    - name: Показать результат повышения прав
+      ansible.builtin.debug:
+        msg: "С повышением прав команда выполняется от пользователя {{ privileged_user.stdout }}"

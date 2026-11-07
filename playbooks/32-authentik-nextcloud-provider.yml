@@ -1,0 +1,48 @@
+---
+- name: Зарегистрировать Nextcloud в authentik
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Прочитать общий секрет OIDC
+      ansible.builtin.slurp:
+        src: "{{ project_dir }}/secrets/nextcloud_oidc_client_secret"
+      register: nextcloud_oidc_secret
+      no_log: true
+
+    - name: Настроить приложение и OIDC-провайдера
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - authentik-worker
+          - ak
+          - shell
+          - -c
+          - "{{ lookup('ansible.builtin.file', '../files/authentik/setup_nextcloud_oidc.py') }}"
+        stdin: >-
+          {{
+            {
+              'client_id': nextcloud_oidc_client_id,
+              'client_secret': nextcloud_oidc_secret.content | b64decode | trim,
+              'slug': nextcloud_oidc_slug,
+              'nextcloud_url': nextcloud_public_protocol ~ '://' ~ nextcloud_public_host,
+              'redirect_uri': nextcloud_public_protocol ~ '://' ~ nextcloud_public_host ~ '/apps/user_oidc/code'
+            } | to_json
+          }}
+      register: nextcloud_oidc_provider
+      changed_when: "'OIDC_CHANGED' in nextcloud_oidc_provider.stdout"
+      no_log: true
+
+    - name: Подтвердить настройку приложения
+      ansible.builtin.assert:
+        that:
+          - >-
+            'OIDC_CHANGED' in nextcloud_oidc_provider.stdout
+            or 'OIDC_UNCHANGED' in nextcloud_oidc_provider.stdout
+        success_msg: "Приложение Nextcloud и OIDC-провайдер настроены"

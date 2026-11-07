@@ -1,0 +1,67 @@
+---
+- name: Развернуть конфигурацию nginx
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать каталог конфигурации nginx
+      ansible.builtin.file:
+        path: "{{ project_dir }}/nginx"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Передать Compose на сервер
+      ansible.builtin.template:
+        src: ../templates/compose.yml.j2
+        dest: "{{ project_dir }}/compose.yml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Передать конфигурацию nginx на сервер
+      ansible.builtin.template:
+        src: "{{ nginx_template | default('../files/nginx/default.conf') }}"
+        dest: "{{ project_dir }}/nginx/default.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Применить конфигурацию nginx
+
+    - name: Запустить Compose-проект
+      community.docker.docker_compose_v2:
+        project_src: "{{ project_dir }}"
+        state: present
+        pull: policy
+        wait: true
+        wait_timeout: 60
+
+    - name: Применить изменения перед HTTP-проверкой
+      ansible.builtin.meta: flush_handlers
+
+    - name: Проверить HTTP-ответ nginx
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ nginx_http_port }}/healthz"
+        status_code: 200
+        return_content: true
+      register: nginx_health
+      until: nginx_health.status == 200 and nginx_health.content == "ok\n"
+      retries: 5
+      delay: 2
+
+  handlers:
+    - name: Применить конфигурацию nginx
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - nginx
+          - sh
+          - -c
+          - nginx -t && nginx -s reload

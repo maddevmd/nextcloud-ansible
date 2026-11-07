@@ -1,0 +1,32 @@
+---
+# Copy to inventory/server.yml and replace documentation addresses/domains.
+# Existing Docker, images and TLS certificates are prerequisites; see README.
+all:
+  children:
+    nextcloud_servers:
+      vars:
+        project_dir: /opt/nextcloud-lab/stack
+        nginx_http_port: 80
+        nginx_https_port: 443
+        nginx_tls: true
+        nginx_template: ../templates/nginx-https.conf.j2
+        nextcloud_image: nextcloud:35.0.2-apache
+        nextcloud_admin_user: ncadmin
+        nextcloud_public_host: cloud.example.com
+        nextcloud_public_protocol: https
+        # Requires the two local S3 images to have been loaded beforehand.
+        build_storage_images: false
+        onlyoffice_domain: office.example.com
+        # Legacy educational image. Review support and licensing before production.
+        onlyoffice_image: "cmwedding/onlyoffice-licensed@sha256:5a05ce235f3f95638e132ad969bc403699f0d05cea850e31b7b17d659118b48a"
+        authentik_domain: auth.example.com
+        authentik_image: ghcr.io/goauthentik/server:2026.8.5
+        nextcloud_oidc_client_id: nextcloud
+        nextcloud_oidc_slug: nextcloud
+      hosts:
+        public_server:
+          ansible_host: 192.0.2.10
+          # Must exist already and have sudo; the bootstrap account may be root.
+          ansible_user: deploy
+          ansible_ssh_private_key_file: ~/.ssh/nextcloud_server
+          ansible_python_interpreter: /usr/bin/python3

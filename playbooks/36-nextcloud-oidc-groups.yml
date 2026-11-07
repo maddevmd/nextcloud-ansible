@@ -1,0 +1,50 @@
+---
+- name: Настроить получение групп из authentik
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Получить настройки провайдера authentik
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - user_oidc:provider
+          - authentik
+          - --output=json
+      register: oidc_group_config
+      changed_when: false
+
+    - name: Настроить применение выбранных групп
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - user_oidc:provider
+          - authentik
+          - --mapping-groups=nextcloud_groups
+          - --group-provisioning=1
+          - --group-whitelist-regex=^nextcloud-users$
+      when: >-
+        (oidc_group_config.stdout | from_json).settings.get('mappingGroups', '') != 'nextcloud_groups'
+        or not ((oidc_group_config.stdout | from_json).settings.get('groupProvisioning', false) | bool)
+        or (oidc_group_config.stdout | from_json).settings.get('groupWhitelistRegex', '') != '^nextcloud-users$'

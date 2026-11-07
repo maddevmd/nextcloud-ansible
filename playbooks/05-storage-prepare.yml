@@ -1,0 +1,63 @@
+---
+- name: Подготовить каталоги и секреты S3-хранилища
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать каталог секретов
+      ansible.builtin.file:
+        path: "{{ project_dir }}/secrets"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Создать каталог данных MinIO
+      ansible.builtin.file:
+        path: "{{ project_dir }}/data/minio"
+        state: directory
+        owner: '10001'
+        group: '10001'
+        mode: '0750'
+
+    - name: Проверить наличие файлов секретов
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/secrets/{{ item }}"
+      loop:
+        - minio_root_password
+        - nextcloud_s3_secret_key
+      register: storage_secrets
+
+    - name: Создать отсутствующие секреты
+      ansible.builtin.copy:
+        dest: "{{ project_dir }}/secrets/{{ item.item }}"
+        content: "{{ lookup('ansible.builtin.password', '/dev/null', length=64, chars=['ascii_letters', 'digits']) }}\n"
+        owner: "{{ '10001' if item.item == 'minio_root_password' else 'root' }}"
+        group: "{{ '10001' if item.item == 'minio_root_password' else 'root' }}"
+        mode: "{{ '0400' if item.item == 'minio_root_password' else '0600' }}"
+        force: false
+      loop: "{{ storage_secrets.results }}"
+      when: not item.stat.exists
+      no_log: true
+      diff: false
+
+    - name: Повторно проверить файлы секретов
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/secrets/{{ item }}"
+      loop:
+        - minio_root_password
+        - nextcloud_s3_secret_key
+      register: storage_secrets
+
+    - name: Убедиться, что секреты существуют и не пустые
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg | default(false)
+          - (item.stat.size | default(0)) > 0
+        fail_msg: "Секрет {{ item.item }} отсутствует или некорректен"
+        success_msg: "Файл {{ item.item }} существует и не пустой"
+      loop: "{{ storage_secrets.results }}"
+      loop_control:
+        label: "{{ item.item }}"

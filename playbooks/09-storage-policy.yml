@@ -1,0 +1,25 @@
+---
+- name: Настроить policy Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Привести policy к содержимому файла проекта
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - nextcloud-lab_storage
+          - --mount
+          - "type=bind,src={{ project_dir }}/secrets/minio_root_password,dst=/run/secrets/minio_root_password,readonly"
+          - --mount
+          - "type=bind,src={{ project_dir }}/build/s3-client,dst=/work,readonly"
+          - nextcloud-lab/s3-client:2
+          - python
+          - /work/ensure_policy.py
+      register: policy_setup
+      changed_when: "'POLICY_CHANGED' in (policy_setup.stdout | default(''))"
+      no_log: true

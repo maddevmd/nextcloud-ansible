@@ -1,0 +1,25 @@
+---
+- name: Подготовить секрет OIDC для Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать каталог секретов
+      ansible.builtin.file:
+        path: "{{ project_dir }}/secrets"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Создать отсутствующий секрет OIDC
+      ansible.builtin.copy:
+        dest: "{{ project_dir }}/secrets/nextcloud_oidc_client_secret"
+        content: "{{ lookup('ansible.builtin.password', '/dev/null', length=64, chars=['ascii_letters', 'digits']) }}\n"
+        owner: root
+        group: '33'
+        mode: '0440'
+        force: false
+      no_log: true
+      diff: false

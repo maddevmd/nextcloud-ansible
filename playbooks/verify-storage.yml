@@ -1,0 +1,53 @@
+---
+- name: Проверить S3-доступ Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Подготовить отдельный тестовый bucket
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - nextcloud-lab_storage
+          - --env
+          - S3_BUCKET=lab-s3-test
+          - --mount
+          - "type=bind,src={{ project_dir }}/secrets/minio_root_password,dst=/run/secrets/minio_root_password,readonly"
+          - --mount
+          - "type=bind,src={{ project_dir }}/build/s3-client,dst=/work,readonly"
+          - nextcloud-lab/s3-client:2
+          - python
+          - /work/create_bucket.py
+      register: test_bucket
+      changed_when: "'Bucket lab-s3-test created' in (test_bucket.stdout | default(''))"
+      no_log: true
+
+    - name: Проверить разрешённый и запрещённый доступ
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - nextcloud-lab_storage
+          - --mount
+          - "type=bind,src={{ project_dir }}/secrets/nextcloud_s3_secret_key,dst=/run/secrets/nextcloud_s3_secret_key,readonly"
+          - --mount
+          - "type=bind,src={{ project_dir }}/build/s3-client,dst=/work,readonly"
+          - nextcloud-lab/s3-client:2
+          - python
+          - /work/test_nextcloud_access.py
+      register: access_test
+      changed_when: false
+      no_log: true
+
+    - name: Подтвердить завершение всех проверок
+      ansible.builtin.assert:
+        that:
+          - "'PASS: Nextcloud bucket permissions verified' in (access_test.stdout | default(''))"
+        success_msg: "S3 проверено: свой bucket доступен, чужой запрещён"
+        fail_msg: "Скрипт не подтвердил прохождение всех проверок"

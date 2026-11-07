@@ -1,0 +1,112 @@
+---
+- name: Подготовить каталоги и секреты
+  ansible.builtin.import_playbook: 05-storage-prepare.yml
+
+- name: Доставить файлы сборки
+  ansible.builtin.import_playbook: 06-storage-files.yml
+
+- name: Подготовить Docker-образы
+  ansible.builtin.import_playbook: 07-storage-build.yml
+  when: build_storage_images | default(true) | bool
+
+- name: Подготовить PostgreSQL
+  ansible.builtin.import_playbook: 11-database-prepare.yml
+
+- name: Подготовить Nextcloud
+  ansible.builtin.import_playbook: 13-nextcloud-prepare.yml
+
+- name: Подготовить секрет и скрипт ONLYOFFICE
+  ansible.builtin.import_playbook: 19-onlyoffice-prepare.yml
+  when: onlyoffice_image is defined
+
+- name: Подготовить секреты и данные authentik
+  ansible.builtin.import_playbook: 25-authentik-prepare.yml
+  when: authentik_image is defined
+
+- name: Подготовить общий секрет OIDC
+  ansible.builtin.import_playbook: 31-nextcloud-oidc-prepare.yml
+  when: authentik_image is defined
+
+- name: Запустить Compose-проект
+  ansible.builtin.import_playbook: 04-nginx.yml
+
+- name: Подготовить пользователя базы Nextcloud
+  ansible.builtin.import_playbook: 12-database-user.yml
+
+- name: Подготовить базу authentik
+  ansible.builtin.import_playbook: 26-authentik-database.yml
+  when: authentik_image is defined
+
+- name: Подготовить bucket Nextcloud
+  ansible.builtin.import_playbook: 08-storage-bucket.yml
+
+- name: Настроить policy Nextcloud
+  ansible.builtin.import_playbook: 09-storage-policy.yml
+
+- name: Настроить пользователя Nextcloud
+  ansible.builtin.import_playbook: 10-storage-user.yml
+
+- name: Запустить Nextcloud
+  ansible.builtin.import_playbook: 14-nextcloud-start.yml
+
+- name: Настроить публичный адрес Nextcloud
+  ansible.builtin.import_playbook: 24-nextcloud-public-url.yml
+
+- name: Настроить фоновые задачи Nextcloud
+  ansible.builtin.import_playbook: 15-nextcloud-cron.yml
+
+- name: Настроить продление HTTPS
+  ansible.builtin.import_playbook: 17-certificate-renewal.yml
+  when: nginx_tls | default(false) | bool
+
+- name: Запустить ONLYOFFICE
+  ansible.builtin.import_playbook: 20-onlyoffice-start.yml
+  when: onlyoffice_image is defined
+
+- name: Подготовить коннектор ONLYOFFICE
+  ansible.builtin.import_playbook: 22-onlyoffice-connector.yml
+  when: onlyoffice_image is defined
+
+- name: Настроить коннектор ONLYOFFICE
+  ansible.builtin.import_playbook: 23-onlyoffice-configure.yml
+  when: onlyoffice_image is defined
+
+- name: Проверить интеграцию ONLYOFFICE
+  ansible.builtin.import_playbook: verify-onlyoffice.yml
+  when: onlyoffice_image is defined
+
+- name: Запустить authentik
+  ansible.builtin.import_playbook: 27-authentik-start.yml
+  when: authentik_image is defined
+
+- name: Подготовить администратора authentik
+  ansible.builtin.import_playbook: 28-authentik-admin.yml
+  when: authentik_image is defined
+
+- name: Настроить основной адрес authentik
+  ansible.builtin.import_playbook: 29-authentik-base-url.yml
+  when: authentik_image is defined
+
+- name: Установить коннектор OIDC в Nextcloud
+  ansible.builtin.import_playbook: 30-nextcloud-oidc.yml
+  when: authentik_image is defined
+
+- name: Подготовить группу доступа к Nextcloud
+  ansible.builtin.import_playbook: 34-authentik-access-group.yml
+  when: authentik_image is defined
+
+- name: Зарегистрировать Nextcloud в authentik
+  ansible.builtin.import_playbook: 32-authentik-nextcloud-provider.yml
+  when: authentik_image is defined
+
+- name: Ограничить вход в Nextcloud группой
+  ansible.builtin.import_playbook: 35-authentik-nextcloud-access.yml
+  when: authentik_image is defined
+
+- name: Настроить провайдера OIDC в Nextcloud
+  ansible.builtin.import_playbook: 33-nextcloud-oidc-provider.yml
+  when: authentik_image is defined
+
+- name: Настроить передачу групп в Nextcloud
+  ansible.builtin.import_playbook: 36-nextcloud-oidc-groups.yml
+  when: authentik_image is defined

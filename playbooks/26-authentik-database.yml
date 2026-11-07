@@ -1,0 +1,35 @@
+---
+- name: Подготовить базу authentik
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Создать базу и пользователя при необходимости
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - "0"
+          - postgres
+          - sh
+          - -s
+        stdin: "{{ lookup('ansible.builtin.file', '../files/postgres/setup_authentik_db.sh') }}"
+      register: authentik_database_setup
+      changed_when: >-
+        'CREATE ROLE' in (authentik_database_setup.stdout | default(''))
+        or 'CREATE DATABASE' in (authentik_database_setup.stdout | default(''))
+        or 'ALTER DATABASE' in (authentik_database_setup.stdout | default(''))
+      no_log: true
+
+    - name: Подтвердить доступ authentik к базе
+      ansible.builtin.assert:
+        that:
+          - "'AUTHENTIK_DATABASE_ACCESS_OK' in (authentik_database_setup.stdout | default(''))"
+        success_msg: "Пользователь authentik подключается к своей базе"
+        fail_msg: "Не получено подтверждение доступа к базе authentik"

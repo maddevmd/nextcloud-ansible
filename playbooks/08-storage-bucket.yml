@@ -1,0 +1,47 @@
+---
+- name: Подготовить bucket Nextcloud
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Дождаться готовности MinIO
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - nextcloud-lab_storage
+          - nextcloud-lab/s3-client:2
+          - python
+          - -c
+          - "import urllib.request; urllib.request.urlopen('http://minio:9000/minio/health/ready', timeout=5).close()"
+      register: minio_ready
+      changed_when: false
+      until: minio_ready.rc == 0
+      retries: 10
+      delay: 3
+
+    - name: Создать bucket Nextcloud, если он отсутствует
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - nextcloud-lab_storage
+          - --mount
+          - "type=bind,src={{ project_dir }}/secrets/minio_root_password,dst=/run/secrets/minio_root_password,readonly"
+          - --mount
+          - "type=bind,src={{ project_dir }}/build/s3-client,dst=/work,readonly"
+          - nextcloud-lab/s3-client:2
+          - python
+          - /work/create_bucket.py
+      register: bucket_setup
+      changed_when: "'Bucket nextcloud created' in (bucket_setup.stdout | default(''))"
+      no_log: true
+
+    - name: Сообщить о готовности bucket
+      ansible.builtin.debug:
+        msg: "Bucket nextcloud существует и доступен администратору"

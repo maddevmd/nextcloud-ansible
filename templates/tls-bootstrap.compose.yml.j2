@@ -1,0 +1,11 @@
+name: nextcloud-tls-bootstrap
+
+services:
+  nginx-bootstrap:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    ports:
+      - "{{ ansible_host }}:80:80"
+    volumes:
+      - "{{ project_dir }}/tls-bootstrap:/etc/nginx/conf.d:ro"
+      - "{{ project_dir }}/acme-webroot:/var/www/acme:ro"

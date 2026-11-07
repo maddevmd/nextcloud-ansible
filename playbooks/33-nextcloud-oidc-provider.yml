@@ -1,0 +1,64 @@
+---
+- name: Настроить вход Nextcloud через authentik
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  vars:
+    oidc_discovery_url: "https://{{ authentik_domain }}/application/o/{{ nextcloud_oidc_slug }}/.well-known/openid-configuration"
+    oidc_scope: "openid email profile nextcloud_groups"
+
+  tasks:
+    - name: Получить существующих OIDC-провайдеров
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - user_oidc:provider
+          - --output=json
+      register: oidc_providers
+      changed_when: false
+
+    - name: Найти настройку authentik
+      ansible.builtin.set_fact:
+        oidc_existing: >-
+          {{
+            oidc_providers.stdout | from_json
+            | selectattr('identifier', 'equalto', 'authentik')
+            | list | first | default({})
+          }}
+
+    - name: Создать или обновить параметры провайдера
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ project_dir }}/compose.yml"
+          - exec
+          - -T
+          - --user
+          - www-data
+          - nextcloud
+          - php
+          - occ
+          - user_oidc:provider
+          - authentik
+          - "--clientid={{ nextcloud_oidc_client_id }}"
+          - --clientsecret-file=/run/secrets/nextcloud_oidc_client_secret
+          - "--discoveryuri={{ oidc_discovery_url }}"
+          - "--scope={{ oidc_scope }}"
+      when: >-
+        oidc_existing.get('clientId', '') != nextcloud_oidc_client_id
+        or oidc_existing.get('discoveryEndpoint', '') != oidc_discovery_url
+        or oidc_existing.get('scope', '') != oidc_scope
+      no_log: true
