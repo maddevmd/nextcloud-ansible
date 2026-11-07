@@ -1,0 +1,94 @@
+---
+- name: Проверить порты и административный доступ
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Получить слушающие TCP и UDP порты
+      ansible.builtin.command:
+        argv: [ss, -lntup]
+      register: security_listeners
+      changed_when: false
+
+    - name: Показать слушающие порты
+      ansible.builtin.debug:
+        var: security_listeners.stdout_lines
+
+    - name: Проверить реальные публикации запущенных контейнеров
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json
+            import subprocess
+
+            ids = subprocess.check_output(
+                ["docker", "ps", "-q"], text=True
+            ).split()
+            containers = json.loads(subprocess.check_output(
+                ["docker", "inspect", *ids], text=True
+            )) if ids else []
+            published = []
+            unexpected = []
+            for container in containers:
+                name = container["Name"].lstrip("/")
+                labels = container["Config"].get("Labels") or {}
+                service = labels.get("com.docker.compose.service", "")
+                mode = container["HostConfig"]["NetworkMode"]
+                if mode == "host":
+                    unexpected.append({"container": name, "reason": "host networking"})
+                for port, bindings in (container["NetworkSettings"].get("Ports") or {}).items():
+                    for binding in bindings or []:
+                        entry = {
+                            "container": name,
+                            "service": service,
+                            "container_port": port,
+                            "host_ip": binding["HostIp"],
+                            "host_port": binding["HostPort"],
+                        }
+                        published.append(entry)
+                        if not (
+                            service == "nginx"
+                            and port.endswith("/tcp")
+                            and binding["HostPort"] in ["80", "443"]
+                        ):
+                            unexpected.append(entry)
+            print(json.dumps({"published": published, "unexpected": unexpected}))
+      register: security_container_ports
+      changed_when: false
+
+    - name: Показать опубликованные Docker-порты
+      ansible.builtin.debug:
+        msg: "{{ security_container_ports.stdout | from_json }}"
+
+    - name: Проверить отсутствие неожиданных публикаций
+      ansible.builtin.assert:
+        that:
+          - (security_container_ports.stdout | from_json).unexpected | length == 0
+        fail_msg: "Обнаружены дополнительные публикации или host networking. Сначала разберите их назначение."
+
+    - name: Получить итоговую конфигурацию SSH
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -T]
+      register: security_ssh_audit
+      changed_when: false
+
+    - name: Показать основные настройки SSH
+      ansible.builtin.debug:
+        msg: >-
+          {{ security_ssh_audit.stdout_lines
+             | select('match', '^(port|permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication|authenticationmethods) ')
+             | list }}
+
+    - name: Проверить режим UFW
+      ansible.builtin.command:
+        argv: [ufw, status, verbose]
+      register: security_ufw_audit
+      changed_when: false
+      failed_when: security_ufw_audit.rc not in [0, 2, 127]
+
+    - name: Показать состояние firewall
+      ansible.builtin.debug:
+        var: security_ufw_audit.stdout_lines

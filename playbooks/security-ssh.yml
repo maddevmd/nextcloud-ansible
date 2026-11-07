@@ -1,0 +1,155 @@
+---
+- name: Отключить парольный и прямой root-вход SSH
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  vars:
+    security_admin_user: deploy
+
+  pre_tasks:
+    - name: Требовать подключение отдельным администратором
+      ansible.builtin.assert:
+        that:
+          - ansible_user == security_admin_user
+          - ansible_user != 'root'
+        fail_msg: "Сначала запусти security-admin.yml, затем используй inventory с ansible_user=deploy"
+
+    - name: Проверить новое ключевое подключение и sudo перед изменением SSH
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -F
+          - /dev/null
+          - -i
+          - "{{ ansible_ssh_private_key_file | expanduser }}"
+          - -p
+          - "{{ ansible_port | default(22) | string }}"
+          - -o
+          - BatchMode=yes
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - StrictHostKeyChecking=yes
+          - -o
+          - ControlMaster=no
+          - -o
+          - ControlPath=none
+          - -o
+          - PasswordAuthentication=no
+          - -o
+          - KbdInteractiveAuthentication=no
+          - -o
+          - ConnectTimeout=15
+          - "{{ security_admin_user }}@{{ ansible_host }}"
+          - sudo
+          - -n
+          - id
+          - -u
+      delegate_to: localhost
+      become: false
+      register: security_fresh_login
+      changed_when: false
+      failed_when: security_fresh_login.rc != 0 or security_fresh_login.stdout | trim != '0'
+
+  tasks:
+    - name: Проверить и применить политику SSH с восстановлением при ошибке
+      block:
+        - name: Задать приоритетные глобальные ограничения SSH
+          ansible.builtin.blockinfile:
+            path: /etc/ssh/sshd_config
+            insertbefore: BOF
+            marker: '# {mark} ANSIBLE NEXTCLOUD SSH SECURITY'
+            block: |
+              PermitRootLogin no
+              PasswordAuthentication no
+              KbdInteractiveAuthentication no
+              PubkeyAuthentication yes
+              AuthenticationMethods publickey
+              PermitEmptyPasswords no
+              X11Forwarding no
+              MaxAuthTries 3
+              LoginGraceTime 30
+            owner: root
+            group: root
+            mode: '0644'
+            backup: true
+            validate: '/usr/sbin/sshd -t -f %s'
+          register: security_sshd_config
+
+        - name: Проверить синтаксис всей конфигурации SSH
+          ansible.builtin.command:
+            argv: [/usr/sbin/sshd, -t]
+          changed_when: false
+
+        - name: Проверить итоговую политику SSH
+          ansible.builtin.command:
+            argv:
+              - /usr/sbin/sshd
+              - -T
+              - -C
+              - "user={{ security_admin_user }},host={{ ansible_host }},addr=127.0.0.1"
+          register: security_sshd_effective
+          changed_when: false
+
+        - name: Проверить обязательные ограничения
+          ansible.builtin.assert:
+            that:
+              - "'permitrootlogin no' in security_sshd_effective.stdout_lines"
+              - "'passwordauthentication no' in security_sshd_effective.stdout_lines"
+              - "'kbdinteractiveauthentication no' in security_sshd_effective.stdout_lines"
+              - "'pubkeyauthentication yes' in security_sshd_effective.stdout_lines"
+              - "'authenticationmethods publickey' in security_sshd_effective.stdout_lines"
+
+        - name: Проверить ограничения для root с учётом Match
+          ansible.builtin.command:
+            argv:
+              - /usr/sbin/sshd
+              - -T
+              - -C
+              - "user=root,host={{ ansible_host }},addr=127.0.0.1"
+          register: security_root_effective
+          changed_when: false
+
+        - name: Убедиться в запрете root-входа
+          ansible.builtin.assert:
+            that:
+              - "'permitrootlogin no' in security_root_effective.stdout_lines"
+              - "'passwordauthentication no' in security_root_effective.stdout_lines"
+
+        - name: Перезагрузить настройки SSH без остановки службы
+          ansible.builtin.systemd_service:
+            name: ssh.service
+            state: reloaded
+          when: security_sshd_config.changed
+
+        - name: Проверить новый вход администратора после применения
+          ansible.builtin.command:
+            argv: "{{ security_fresh_login.cmd }}"
+          delegate_to: localhost
+          become: false
+          register: security_after_login
+          changed_when: false
+          failed_when: security_after_login.rc != 0 or security_after_login.stdout | trim != '0'
+
+      rescue:
+        - name: Восстановить предыдущую конфигурацию SSH
+          ansible.builtin.copy:
+            src: "{{ security_sshd_config.backup_file }}"
+            dest: /etc/ssh/sshd_config
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0644'
+            validate: '/usr/sbin/sshd -t -f %s'
+          when: security_sshd_config.backup_file is defined
+
+        - name: Перезагрузить восстановленную конфигурацию
+          ansible.builtin.systemd_service:
+            name: ssh.service
+            state: reloaded
+          when: security_sshd_config.backup_file is defined
+
+        - name: Остановить выполнение после неуспешной проверки
+          ansible.builtin.fail:
+            msg: "Проверка защиты SSH не прошла; предыдущая конфигурация восстановлена, если менялась. Проверь доступ через текущую сессию/консоль провайдера."

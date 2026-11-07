@@ -1,0 +1,110 @@
+---
+- name: Подготовить отдельного SSH-администратора
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  vars:
+    security_admin_user: deploy
+    security_admin_public_key_file: "{{ ansible_ssh_private_key_file }}.pub"
+
+  tasks:
+    - name: Проверить имя администратора и параметры подключения
+      ansible.builtin.assert:
+        that:
+          - security_admin_user is match('^[a-z_][a-z0-9_-]{0,30}$')
+          - security_admin_user != 'root'
+          - ansible_ssh_private_key_file is defined
+        fail_msg: "Нужны отдельный пользователь и SSH-ключ на управляющем компьютере"
+
+    - name: Проверить открытый ключ на управляющем компьютере
+      ansible.builtin.command:
+        argv:
+          - ssh-keygen
+          - -lf
+          - "{{ security_admin_public_key_file | expanduser }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Установить sudo
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+
+    - name: Создать администратора без парольного входа
+      ansible.builtin.user:
+        name: "{{ security_admin_user }}"
+        shell: /bin/bash
+        create_home: true
+        password_lock: true
+        groups: sudo
+        append: true
+      register: security_admin_account
+
+    - name: Подготовить каталог SSH
+      ansible.builtin.file:
+        path: "{{ security_admin_account.home }}/.ssh"
+        state: directory
+        owner: "{{ security_admin_user }}"
+        group: "{{ security_admin_user }}"
+        mode: '0700'
+
+    - name: Установить открытый SSH-ключ администратора
+      ansible.builtin.lineinfile:
+        path: "{{ security_admin_account.home }}/.ssh/authorized_keys"
+        line: "{{ lookup('ansible.builtin.file', security_admin_public_key_file | expanduser) | trim }}"
+        create: true
+        owner: "{{ security_admin_user }}"
+        group: "{{ security_admin_user }}"
+        mode: '0600'
+
+    - name: Разрешить административные задачи Ansible через sudo
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/90-nextcloud-{{ security_admin_user }}"
+        content: "{{ security_admin_user }} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        owner: root
+        group: root
+        mode: '0440'
+        validate: '/usr/sbin/visudo -cf %s'
+
+    - name: Проверить новое SSH-соединение и sudo с управляющего компьютера
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -F
+          - /dev/null
+          - -i
+          - "{{ ansible_ssh_private_key_file | expanduser }}"
+          - -p
+          - "{{ ansible_port | default(22) | string }}"
+          - -o
+          - BatchMode=yes
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - StrictHostKeyChecking=yes
+          - -o
+          - ControlMaster=no
+          - -o
+          - ControlPath=none
+          - -o
+          - PasswordAuthentication=no
+          - -o
+          - KbdInteractiveAuthentication=no
+          - -o
+          - ConnectTimeout=15
+          - "{{ security_admin_user }}@{{ ansible_host }}"
+          - sudo
+          - -n
+          - id
+          - -u
+      delegate_to: localhost
+      become: false
+      register: security_admin_login
+      changed_when: false
+      failed_when: security_admin_login.rc != 0 or security_admin_login.stdout | trim != '0'
+
+    - name: Подтвердить новый способ доступа
+      ansible.builtin.debug:
+        msg: "Новая ключевая SSH-сессия {{ security_admin_user }} и sudo проверены. Root пока не отключён."

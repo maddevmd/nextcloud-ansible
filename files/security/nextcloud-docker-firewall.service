@@ -1,0 +1,13 @@
+[Unit]
+Description=Apply ingress restrictions for Docker containers
+Requires=docker.service
+After=docker.service ufw.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nextcloud-docker-ingress ens3
+RemainAfterExit=yes
+
+[Install]
+WantedBy=docker.service

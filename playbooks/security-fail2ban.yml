@@ -1,0 +1,64 @@
+---
+- name: Ограничить повторные неудачные попытки SSH-входа
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Требовать отдельного SSH-администратора
+      ansible.builtin.assert:
+        that:
+          - ansible_user != 'root'
+        fail_msg: Сначала проверь вход отдельным администратором по ключу
+
+    - name: Установить Fail2ban и поддержку журнала systemd
+      ansible.builtin.apt:
+        name:
+          - fail2ban
+          - python3-systemd
+          - iptables
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Передать настройки защиты SSH
+      ansible.builtin.template:
+        src: ../templates/fail2ban-sshd.local.j2
+        dest: /etc/fail2ban/jail.d/99-nextcloud-sshd.local
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Перезапустить Fail2ban
+
+    - name: Проверить полную конфигурацию Fail2ban
+      ansible.builtin.command:
+        argv: [fail2ban-client, -t]
+      changed_when: false
+
+    - name: Применить проверенные изменения
+      ansible.builtin.meta: flush_handlers
+
+    - name: Включить и запустить Fail2ban
+      ansible.builtin.systemd_service:
+        name: fail2ban.service
+        enabled: true
+        state: started
+
+    - name: Проверить доступность правила SSH
+      ansible.builtin.command:
+        argv: [fail2ban-client, status, sshd]
+      register: fail2ban_sshd_status
+      changed_when: false
+      retries: 5
+      delay: 2
+      until: fail2ban_sshd_status.rc == 0
+
+    - name: Показать состояние защиты SSH
+      ansible.builtin.debug:
+        var: fail2ban_sshd_status.stdout_lines
+
+  handlers:
+    - name: Перезапустить Fail2ban
+      ansible.builtin.systemd_service:
+        name: fail2ban.service
+        state: restarted

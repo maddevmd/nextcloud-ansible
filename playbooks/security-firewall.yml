@@ -1,0 +1,143 @@
+---
+- name: Настроить firewall Ubuntu
+  hosts: nextcloud_servers
+  gather_facts: false
+  become: true
+
+  pre_tasks:
+    - name: Проверить новый вход по ключу и sudo
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -F
+          - /dev/null
+          - -i
+          - "{{ ansible_ssh_private_key_file | expanduser }}"
+          - -p
+          - "{{ ansible_port | default(22) | string }}"
+          - -o
+          - BatchMode=yes
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - StrictHostKeyChecking=yes
+          - -o
+          - ControlMaster=no
+          - -o
+          - ControlPath=none
+          - -o
+          - ConnectTimeout=15
+          - "{{ ansible_user }}@{{ ansible_host }}"
+          - sudo
+          - -n
+          - id
+          - -u
+      delegate_to: localhost
+      become: false
+      register: firewall_before_login
+      changed_when: false
+      failed_when: >-
+        firewall_before_login.rc != 0
+        or firewall_before_login.stdout | trim != '0'
+
+  tasks:
+    - name: Требовать подключение отдельным администратором
+      ansible.builtin.assert:
+        that:
+          - ansible_user != 'root'
+        fail_msg: "Сначала проверь вход deploy по ключу и sudo"
+
+    - name: Установить UFW
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+
+    - name: Включить обработку IPv6
+      ansible.builtin.lineinfile:
+        path: /etc/default/ufw
+        regexp: '^IPV6='
+        line: 'IPV6=yes'
+
+    - name: Разрешить SSH
+      community.general.ufw:
+        rule: allow
+        port: "{{ ansible_port | default(22) | string }}"
+        proto: tcp
+        comment: Administrative SSH
+
+    - name: Разрешить HTTP и HTTPS
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+        comment: nginx ingress
+      loop:
+        - '80'
+        - '443'
+
+    - name: Запретить остальные входящие подключения
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Разрешить исходящие подключения
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: Включить firewall
+      community.general.ufw:
+        state: enabled
+
+    - name: Получить итоговые правила
+      ansible.builtin.command:
+        argv:
+          - ufw
+          - status
+          - verbose
+      register: firewall_status
+      changed_when: false
+
+    - name: Показать итоговые правила
+      ansible.builtin.debug:
+        var: firewall_status.stdout_lines
+
+    - name: Передать скрипт защиты Docker
+      ansible.builtin.copy:
+        src: ../files/security/docker-ingress.sh
+        dest: /usr/local/sbin/nextcloud-docker-ingress
+        owner: root
+        group: root
+        mode: '0750'
+        validate: /bin/sh -n %s
+      register: docker_firewall_script
+
+    - name: Передать описание службы защиты Docker
+      ansible.builtin.copy:
+        src: ../files/security/nextcloud-docker-firewall.service
+        dest: /etc/systemd/system/nextcloud-docker-firewall.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: docker_firewall_unit
+
+    - name: Подключить и запустить защиту Docker
+      ansible.builtin.systemd_service:
+        name: nextcloud-docker-firewall.service
+        daemon_reload: true
+        enabled: true
+        state: >-
+          {{ 'restarted'
+             if docker_firewall_script.changed or docker_firewall_unit.changed
+             else 'started' }}
+
+    - name: Проверить новый вход после настройки firewall
+      ansible.builtin.command:
+        argv: "{{ firewall_before_login.cmd }}"
+      delegate_to: localhost
+      become: false
+      register: firewall_after_login
+      changed_when: false
+      failed_when: >-
+        firewall_after_login.rc != 0
+        or firewall_after_login.stdout | trim != '0'
