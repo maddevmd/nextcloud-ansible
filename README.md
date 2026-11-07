@@ -21,6 +21,8 @@ Docker Compose, внешние HTTP-запросы проходят через n
 | nginx / TLS | Разделение по доменам, WebSocket, HTTP → HTTPS |
 | Сертификаты | Certbot / Let’s Encrypt, systemd-таймер продления и reload nginx |
 | Отзыв доступа | Отдельный плейбук: блокировка в authentik и отзыв токенов Nextcloud |
+| SSH | Отдельный администратор, проверка ключа/sudo, запрет прямого root-входа и паролей |
+| Firewall | UFW для хоста, отдельные цепочки Docker для IPv4/IPv6 |
 | Повторяемость | Существующие секреты сохраняются; выполнен общий повторный запуск без изменений |
 
 Проверены разрешённые и запрещённые S3-операции, сохранность объектов при
@@ -52,8 +54,9 @@ Docker Compose, внешние HTTP-запросы проходят через n
 - `auth.example.com` → nginx → authentik server.
 - Nextcloud использует MinIO, PostgreSQL и Redis по Docker-сетям.
 - authentik server/worker используют отдельную базу и роль в том же PostgreSQL.
-- Из сервисов приложения опубликованы только порты nginx. SSH — отдельный
-  административный доступ; его ограничение ещё не автоматизировано.
+- Из сервисов приложения опубликованы только порты nginx (80/443). SSH — отдельный
+  административный доступ по ключу через deploy; прямой вход root запрещён.
+- Firewall ограничивает входящий трафик. Исходящий доступ контейнеров сохраняется.
 - Сертификаты завершаются на nginx. Межсервисный HTTP внутри хоста не шифруется.
 - Отдельные базы и роли не являются доказательством полной изоляции PostgreSQL:
   проверка межбазовых прав входит в оставшуюся работу.
@@ -64,7 +67,7 @@ Docker Compose, внешние HTTP-запросы проходят через n
 .
 ├── README.md
 ├── requirements-controller.txt       # версия Ansible на управляющем компьютере
-├── collections/requirements.yml      # community.docker
+├── collections/requirements.yml      # community.docker и community.general
 ├── inventory/
 │   ├── example.yml                  # HTTP-стенд
 │   └── server.example.yml           # пример полного HTTPS-окружения
@@ -81,11 +84,13 @@ Docker Compose, внешние HTTP-запросы проходят через n
 │   ├── 30–36                        # OIDC, приложение, доступ и группы
 │   ├── verify-storage.yml           # положительные и отрицательные S3-проверки
 │   ├── verify-onlyoffice.yml        # проверка из Nextcloud
+│   ├── security-*.yml               # аудит, администратор, SSH, firewall, Fail2ban
 │   └── disable-user.yml             # отдельная операция отключения пользователя
 ├── templates/
 │   ├── compose.yml.j2
 │   ├── nginx-https.conf.j2
 │   ├── tls-bootstrap.compose.yml.j2
+│   ├── fail2ban-sshd.local.j2        # правило защиты SSH
 │   └── renew-certificates.sh.j2
 ├── files/
 │   ├── minio/Dockerfile
@@ -93,10 +98,12 @@ Docker Compose, внешние HTTP-запросы проходят через n
 │   ├── postgres/                    # SQL-подготовка баз и ролей
 │   ├── onlyoffice/start.sh          # чтение JWT из файла перед запуском
 │   ├── authentik/                   # повторяемая настройка приложения OIDC
+│   ├── security/                    # скрипт правил Docker и служба systemd
 │   └── nginx/                       # HTTP-конфигурации
 └── docs/
     ├── OPERATIONS.md                # запуск, проверки и отключение пользователя
     ├── ROADMAP.md                   # ограничения и дальнейшая работа
+    ├── SECURITY.md                  # порядок защиты SSH/firewall и Fail2ban
     └── images/                      # схема и реальные скриншоты
 ```
 
@@ -151,7 +158,20 @@ ansible-playbook -i inventory/server.yml playbooks/deploy.yml
 HTTP webroot; для первого ACME-аккаунта также требуется регистрация в Certbot.
 Не применяйте HTTPS-шаблон до появления сертификатов.
 
-## Проверки
+## Защита сервера
+
+Защита запускается отдельно от deploy. Сначала `security-audit.yml`, затем
+`security-admin.yml` создаёт администратора и проверяет новый вход по ключу/sudo.
+После смены пользователя inventory на deploy применяются `security-ssh.yml`
+и `security-firewall.yml`. Порядок и резервный доступ: [SECURITY](docs/SECURITY.md).
+
+Fail2ban подготовлен отдельным `security-fail2ban.yml`: пять распознанных ошибок SSH
+за десять минут приводят к блокировке IP на десять минут. Применение на сервере
+пока не подтверждено. SSH allowlist не задан по согласованию; доступ только по ключу.
+Для нового сервера нужно проверить имя внешнего интерфейса (сейчас ens3).
+Перезагрузка сервера и внешний отрицательный тест firewall ещё не проверены.
+
+## Проверки приложений
 
 ```bash
 ansible-playbook -i inventory/server.yml playbooks/verify-storage.yml
